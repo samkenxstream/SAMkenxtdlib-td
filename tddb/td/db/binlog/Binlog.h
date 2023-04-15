@@ -93,6 +93,17 @@ class Binlog {
     return seq_no;
   }
 
+  uint64 erase_batch(vector<uint64> event_ids) {
+    if (event_ids.empty()) {
+      return 0;
+    }
+    auto seq_no = next_event_id(0);
+    for (auto event_id : event_ids) {
+      erase(event_id);
+    }
+    return seq_no;
+  }
+
   void add_raw_event(BufferSlice &&raw_event, BinlogDebugInfo info) {
     add_event(BinlogEvent(std::move(raw_event), info));
   }
@@ -150,6 +161,7 @@ class Binlog {
   bool in_flush_events_buffer_{false};
   uint64 last_event_id_{0};
   double need_flush_since_ = 0;
+  double next_buffer_flush_time_ = 0;
   bool need_sync_{false};
   enum class State { Empty, Load, Reindex, Run } state_{State::Empty};
 

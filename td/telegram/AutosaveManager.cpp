@@ -6,24 +6,32 @@
 //
 #include "td/telegram/AutosaveManager.h"
 
+#include "td/telegram/AccessRights.h"
 #include "td/telegram/ContactsManager.h"
 #include "td/telegram/Dependencies.h"
+#include "td/telegram/Global.h"
+#include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/Td.h"
+#include "td/telegram/TdDb.h"
 
 #include "td/db/SqliteKeyValueAsync.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
+#include "td/utils/FlatHashSet.h"
+#include "td/utils/logging.h"
 #include "td/utils/misc.h"
+#include "td/utils/ScopeGuard.h"
+#include "td/utils/tl_helpers.h"
 
 namespace td {
 
-class GetAutosaveSettingsQuery final : public Td::ResultHandler {
+class GetAutoSaveSettingsQuery final : public Td::ResultHandler {
   Promise<telegram_api::object_ptr<telegram_api::account_autoSaveSettings>> promise_;
 
  public:
-  explicit GetAutosaveSettingsQuery(Promise<telegram_api::object_ptr<telegram_api::account_autoSaveSettings>> &&promise)
+  explicit GetAutoSaveSettingsQuery(Promise<telegram_api::object_ptr<telegram_api::account_autoSaveSettings>> &&promise)
       : promise_(std::move(promise)) {
   }
 
@@ -275,7 +283,7 @@ void AutosaveManager::load_autosave_settings(Promise<td_api::object_ptr<td_api::
     return;
   }
 
-  if (G()->parameters().use_message_db) {
+  if (G()->use_message_database()) {
     G()->td_db()->get_sqlite_pmc()->get(
         get_autosave_settings_database_key(), PromiseCreator::lambda([actor_id = actor_id(this)](string value) mutable {
           send_closure(actor_id, &AutosaveManager::on_load_autosave_settings_from_database, std::move(value));
@@ -287,12 +295,12 @@ void AutosaveManager::load_autosave_settings(Promise<td_api::object_ptr<td_api::
 }
 
 void AutosaveManager::on_load_autosave_settings_from_database(string value) {
+  if (G()->close_flag()) {
+    return fail_promises(load_settings_queries_, Global::request_aborted_error());
+  }
   if (settings_.are_inited_) {
     CHECK(load_settings_queries_.empty());
     return;
-  }
-  if (G()->close_flag()) {
-    return fail_promises(load_settings_queries_, Global::request_aborted_error());
   }
   if (value.empty()) {
     LOG(INFO) << "Autosave settings aren't found in database";
@@ -350,11 +358,13 @@ void AutosaveManager::reload_autosave_settings() {
       [actor_id = actor_id(this)](Result<telegram_api::object_ptr<telegram_api::account_autoSaveSettings>> r_settings) {
         send_closure(actor_id, &AutosaveManager::on_get_autosave_settings, std::move(r_settings));
       });
-  td_->create_handler<GetAutosaveSettingsQuery>(std::move(query_promise))->send();
+  td_->create_handler<GetAutoSaveSettingsQuery>(std::move(query_promise))->send();
 }
 
 void AutosaveManager::on_get_autosave_settings(
     Result<telegram_api::object_ptr<telegram_api::account_autoSaveSettings>> r_settings) {
+  G()->ignore_result_if_closing(r_settings);
+
   CHECK(settings_.are_being_reloaded_);
   settings_.are_being_reloaded_ = false;
   SCOPE_EXIT {
@@ -363,9 +373,6 @@ void AutosaveManager::on_get_autosave_settings(
       reload_autosave_settings();
     }
   };
-  if (G()->close_flag() && r_settings.is_ok()) {
-    r_settings = Global::request_aborted_error();
-  }
   if (r_settings.is_error()) {
     return fail_promises(load_settings_queries_, r_settings.move_as_error());
   }
@@ -428,7 +435,7 @@ void AutosaveManager::on_get_autosave_settings(
 }
 
 void AutosaveManager::save_autosave_settings() {
-  if (G()->parameters().use_message_db) {
+  if (G()->use_message_database()) {
     LOG(INFO) << "Save autosave settings to database";
     G()->td_db()->get_sqlite_pmc()->set(get_autosave_settings_database_key(),
                                         log_event_store(settings_).as_slice().str(), Auto());

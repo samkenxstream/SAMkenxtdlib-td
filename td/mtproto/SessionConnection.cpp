@@ -89,7 +89,7 @@ namespace mtproto {
  *
  * 6. New session creation
  *  A notification about new session.
- *  It is reasonable to store unique_id with current session, in order to process duplicated notifications once.
+ *  It is reasonable to store unique_id with current session in order to process duplicated notifications only once.
  *
  *  Causes all messages older than first_msg_id to be re-sent and notifies about a gap in updates
  *  output:
@@ -404,6 +404,7 @@ Status SessionConnection::on_packet(const MsgInfo &info, const mtproto_api::gzip
 Status SessionConnection::on_packet(const MsgInfo &info, const mtproto_api::pong &pong) {
   VLOG(mtproto) << "PONG";
   last_pong_at_ = Time::now_cached();
+  real_last_pong_at_ = last_pong_at_;
   return callback_->on_pong();
 }
 Status SessionConnection::on_packet(const MsgInfo &info, const mtproto_api::future_salts &salts) {
@@ -531,15 +532,16 @@ Status SessionConnection::parse_packet(TlParser &parser) {
 }
 
 Status SessionConnection::on_main_packet(const PacketInfo &info, Slice packet) {
-  // Update pong here too. Real pong can be delayed by lots of big packets
+  // Update pong here too. Real pong can be delayed by many big packets
   last_pong_at_ = Time::now_cached();
+  real_last_pong_at_ = last_pong_at_;
 
   if (!connected_flag_) {
     connected_flag_ = true;
     callback_->on_connected();
   }
 
-  VLOG(raw_mtproto) << "Got packet of size " << packet.size() << " from session " << format::as_hex(info.session_id)
+  VLOG(raw_mtproto) << "Receive packet of size " << packet.size() << " from session " << format::as_hex(info.session_id)
                     << ":" << format::as_hex_dump<4>(packet);
   if (info.no_crypto_flag) {
     return Status::Error("Unencrypted packet");
@@ -712,6 +714,7 @@ Status SessionConnection::on_quick_ack(uint64 quick_ack_token) {
 
 void SessionConnection::on_read(size_t size) {
   last_read_at_ = Time::now_cached();
+  real_last_read_at_ = last_read_at_;
   last_read_size_ += size;
 }
 
@@ -739,6 +742,7 @@ Status SessionConnection::init() {
 }
 
 void SessionConnection::set_online(bool online_flag, bool is_main) {
+  LOG(DEBUG) << "Set online to " << online_flag;
   bool need_ping = online_flag || !online_flag_;
   online_flag_ = online_flag;
   is_main_ = is_main;
@@ -849,7 +853,7 @@ void SessionConnection::send_ack(uint64 message_id) {
     send_before(Time::now_cached() + ACK_DELAY);
   }
   auto ack = static_cast<int64>(message_id);
-  // an easiest way to eliminate duplicated acks for gzipped packets
+  // an easiest way to eliminate duplicated acknowledgements for gzipped packets
   if (to_ack_.empty() || to_ack_.back() != ack) {
     to_ack_.push_back(ack);
 
@@ -1050,7 +1054,9 @@ Status SessionConnection::do_flush() {
     if (stats_callback != nullptr) {
       stats_callback->on_error();
     }
-    return Status::Error(PSLICE() << "Ping timeout of " << ping_disconnect_delay() << " seconds expired");
+    return Status::Error(PSLICE() << "Ping timeout of " << ping_disconnect_delay()
+                                  << " seconds expired; last pong was received " << (Time::now() - real_last_pong_at_)
+                                  << " seconds ago");
   }
 
   if (last_read_at_ + read_disconnect_delay() < Time::now_cached()) {
@@ -1058,7 +1064,8 @@ Status SessionConnection::do_flush() {
     if (stats_callback != nullptr) {
       stats_callback->on_error();
     }
-    return Status::Error(PSLICE() << "Read timeout of " << read_disconnect_delay() << " seconds expired");
+    return Status::Error(PSLICE() << "Read timeout of " << read_disconnect_delay() << " seconds expired; last read was "
+                                  << (Time::now() - real_last_read_at_) << " seconds ago");
   }
 
   return Status::OK();
@@ -1075,14 +1082,20 @@ double SessionConnection::flush(SessionConnection::Callback *callback) {
   }
 
   // wakeup_at
-  // two independent timeouts
-  // 1. close connection after PING_DISCONNECT_DELAY after last_pong.
-  // 2. the one returned by must_flush_packet
+  // three independent timeouts
+  // 1. close connection after ping_disconnect_delay() after last pong
+  // 2. close connection after read_disconnect_delay() after last read
+  // 3. the one returned by must_flush_packet
   relax_timeout_at(&wakeup_at_, last_pong_at_ + ping_disconnect_delay() + 0.002);
   relax_timeout_at(&wakeup_at_, last_read_at_ + read_disconnect_delay() + 0.002);
-  // CHECK(wakeup_at > Time::now_cached());
-
   relax_timeout_at(&wakeup_at_, flush_packet_at_);
+
+  auto now = Time::now();
+  LOG(DEBUG) << "Last pong was in " << (now - last_pong_at_) << '/' << (now - real_last_pong_at_)
+             << ", last read was in " << (now - last_read_at_) << '/' << (now - real_last_read_at_)
+             << ", RTT = " << rtt() << ", ping timeout = " << ping_disconnect_delay()
+             << ", read timeout = " << read_disconnect_delay() << ", flush packet in " << (flush_packet_at_ - now);
+
   return wakeup_at_;
 }
 
