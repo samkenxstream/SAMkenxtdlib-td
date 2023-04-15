@@ -371,9 +371,9 @@ void Session::connection_online_update(double now, bool force) {
 void Session::send(NetQueryPtr &&query) {
   last_activity_timestamp_ = Time::now();
 
-  // query->debug("Session: received from SessionProxy");
+  // query->debug(PSTRING() << get_name() << ": received from SessionProxy");
   query->set_session_id(auth_data_.get_session_id());
-  VLOG(net_query) << "Got query " << query;
+  VLOG(net_query) << "Receive query " << query;
   if (query->update_is_ready()) {
     return_query(std::move(query));
     return;
@@ -417,7 +417,7 @@ void Session::on_bind_result(NetQueryPtr query) {
         } else {
           need_check_main_key_ = true;
           auth_data_.set_use_pfs(false);
-          LOG(WARNING) << "Got ENCRYPTED_MESSAGE_INVALID error, validate main key" << debug;
+          LOG(WARNING) << "Receive ENCRYPTED_MESSAGE_INVALID error, validate main key" << debug;
         }
       }
     }
@@ -866,12 +866,12 @@ Status Session::on_message_result_ok(uint64 message_id, BufferSlice packet, size
   last_success_timestamp_ = Time::now();
 
   TlParser parser(packet.as_slice());
-  int32 ID = parser.fetch_int();
+  int32 response_id = parser.fetch_int();
 
   auto it = sent_queries_.find(message_id);
   if (it == sent_queries_.end()) {
     LOG(DEBUG) << "Drop result to " << tag("message_id", format::as_hex(message_id))
-               << tag("original_size", original_size) << tag("tl", format::as_hex(ID));
+               << tag("original_size", original_size) << tag("response_id", format::as_hex(response_id));
 
     if (original_size > 16 * 1024) {
       dropped_size_ += original_size;
@@ -892,7 +892,9 @@ Status Session::on_message_result_ok(uint64 message_id, BufferSlice packet, size
   if (!parser.get_error()) {
     // Steal authorization information.
     // It is a dirty hack, yep.
-    if (ID == telegram_api::auth_authorization::ID || ID == telegram_api::auth_loginTokenSuccess::ID) {
+    if (response_id == telegram_api::auth_authorization::ID ||
+        response_id == telegram_api::auth_loginTokenSuccess::ID ||
+        response_id == telegram_api::auth_sentCodeSuccess::ID) {
       if (query_ptr->query->tl_constructor() != telegram_api::auth_importAuthorization::ID) {
         G()->net_query_dispatcher().set_main_dc_id(raw_dc_id_);
       }
@@ -971,7 +973,7 @@ void Session::on_message_result_error(uint64 message_id, int error_code, string 
   }
 
   if (message_id == 0) {
-    LOG(ERROR) << "Received an error update";
+    LOG(ERROR) << "Receive an error without message_id";
     return;
   }
 
@@ -1060,8 +1062,8 @@ void Session::on_message_info(uint64 message_id, int32 state, uint64 answer_mess
       case 1:
       case 2:
       case 3:
-        // message not received by server
-        return on_message_failed(message_id, Status::Error("Unknown message identifier"));
+        return on_message_failed(message_id,
+                                 Status::Error("Message wasn't received by the server and must be re-sent"));
       case 0:
         if (answer_message_id == 0) {
           LOG(ERROR) << "Unexpected message_info.state == 0 " << tag("message_id", message_id) << tag("state", state)
@@ -1083,7 +1085,7 @@ void Session::on_message_info(uint64 message_id, int32 state, uint64 answer_mess
       VLOG_IF(net_query, message_id != 0)
           << "Resend answer " << tag("message_id", message_id) << tag("answer_message_id", answer_message_id)
           << tag("answer_size", answer_size) << it->second.query;
-      it->second.query->debug("Session: resend answer");
+      it->second.query->debug(PSTRING() << get_name() << ": resend answer");
     }
     current_info_->connection_->resend_answer(answer_message_id);
   }
@@ -1109,7 +1111,7 @@ void Session::resend_query(NetQueryPtr query) {
 }
 
 void Session::add_query(NetQueryPtr &&net_query) {
-  net_query->debug("Session: pending");
+  net_query->debug(PSTRING() << get_name() << ": pending");
   LOG_IF(FATAL, UniqueId::extract_type(net_query->id()) == UniqueId::BindKey)
       << "Add BindKey query inpo pending_queries_";
   pending_queries_.push(std::move(net_query));
@@ -1135,7 +1137,7 @@ void Session::connection_send_query(ConnectionInfo *info, NetQueryPtr &&net_quer
   }
   if (!invoke_after.empty()) {
     if (!unknown_queries_.empty()) {
-      net_query->debug("Session: wait unknown query to invoke after it");
+      net_query->debug(PSTRING() << get_name() << ": wait unknown query to invoke after it");
       pending_invoke_after_queries_.push_back(std::move(net_query));
       return;
     }
@@ -1144,7 +1146,7 @@ void Session::connection_send_query(ConnectionInfo *info, NetQueryPtr &&net_quer
   auto now = Time::now();
   bool immediately_fail_query = false;
   if (!immediately_fail_query) {
-    net_query->debug("Session: send to mtproto::connection");
+    net_query->debug(PSTRING() << get_name() << ": send to an MTProto connection");
     auto r_message_id =
         info->connection_->send_query(net_query->query().clone(), net_query->gzip_flag() == NetQuery::GzipFlag::On,
                                       message_id, invoke_after_ids, static_cast<bool>(net_query->quick_ack_promise_));
@@ -1254,7 +1256,7 @@ void Session::connection_open_finish(ConnectionInfo *info,
   auto raw_connection = r_raw_connection.move_as_ok();
   VLOG(dc) << "Receive raw connection " << raw_connection.get();
   if (raw_connection->extra().extra != network_generation_) {
-    LOG(WARNING) << "Got RawConnection with old network_generation";
+    LOG(WARNING) << "Receive RawConnection with old network_generation";
     info->state_ = ConnectionInfo::State::Empty;
     yield();
     return;
@@ -1434,7 +1436,6 @@ void Session::on_handshake_ready(Result<unique_ptr<mtproto::AuthKeyHandshake>> r
       if (auth_data_.update_server_time_difference(handshake->get_server_time_diff())) {
         on_server_time_difference_updated();
       }
-      LOG(INFO) << "Got " << (is_main ? "main" : "tmp") << " auth key";
     }
   }
 
@@ -1573,6 +1574,8 @@ void Session::loop() {
   if (!close_flag_ && main_connection_.state_ == ConnectionInfo::State::Empty) {
     connection_open(&main_connection_, now, true /*send ask_info*/);
   }
+
+  connection_online_update(now, false);  // has_queries() could have been changed
 
   relax_timeout_at(&wakeup_at, main_connection_.wakeup_at_);
 

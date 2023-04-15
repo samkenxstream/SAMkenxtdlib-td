@@ -54,12 +54,14 @@ ProfilePhoto get_profile_photo(FileManager *file_manager, UserId user_id, int64 
       result.is_personal = profile_photo->personal_;
       result.id = profile_photo->photo_id_;
       result.minithumbnail = profile_photo->stripped_thumb_.as_slice().str();
-      result.small_file_id = register_photo_size(
-          file_manager, PhotoSizeSource::dialog_photo(DialogId(user_id), user_access_hash, false), result.id,
-          0 /*access_hash*/, "" /*file_reference*/, DialogId(), 0 /*file_size*/, dc_id, PhotoFormat::Jpeg);
-      result.big_file_id = register_photo_size(
-          file_manager, PhotoSizeSource::dialog_photo(DialogId(user_id), user_access_hash, true), result.id,
-          0 /*access_hash*/, "" /*file_reference*/, DialogId(), 0 /*file_size*/, dc_id, PhotoFormat::Jpeg);
+      result.small_file_id =
+          register_photo_size(file_manager, PhotoSizeSource::dialog_photo(DialogId(user_id), user_access_hash, false),
+                              result.id, 0 /*access_hash*/, "" /*file_reference*/, DialogId(), 0 /*file_size*/, dc_id,
+                              PhotoFormat::Jpeg, "get_profile_photo small");
+      result.big_file_id =
+          register_photo_size(file_manager, PhotoSizeSource::dialog_photo(DialogId(user_id), user_access_hash, true),
+                              result.id, 0 /*access_hash*/, "" /*file_reference*/, DialogId(), 0 /*file_size*/, dc_id,
+                              PhotoFormat::Jpeg, "get_profile_photo big");
       break;
     }
     default:
@@ -107,12 +109,12 @@ DialogPhoto get_dialog_photo(FileManager *file_manager, DialogId dialog_id, int6
       result.has_animation = chat_photo->has_video_;
       result.is_personal = false;
       result.minithumbnail = chat_photo->stripped_thumb_.as_slice().str();
-      result.small_file_id =
-          register_photo_size(file_manager, PhotoSizeSource::dialog_photo(dialog_id, dialog_access_hash, false),
-                              chat_photo->photo_id_, 0, "", DialogId(), 0, dc_id, PhotoFormat::Jpeg);
-      result.big_file_id =
-          register_photo_size(file_manager, PhotoSizeSource::dialog_photo(dialog_id, dialog_access_hash, true),
-                              chat_photo->photo_id_, 0, "", DialogId(), 0, dc_id, PhotoFormat::Jpeg);
+      result.small_file_id = register_photo_size(
+          file_manager, PhotoSizeSource::dialog_photo(dialog_id, dialog_access_hash, false), chat_photo->photo_id_, 0,
+          "", DialogId(), 0, dc_id, PhotoFormat::Jpeg, "get_dialog_photo small");
+      result.big_file_id = register_photo_size(
+          file_manager, PhotoSizeSource::dialog_photo(dialog_id, dialog_access_hash, true), chat_photo->photo_id_, 0,
+          "", DialogId(), 0, dc_id, PhotoFormat::Jpeg, "get_dialog_photo big");
 
       break;
     }
@@ -594,7 +596,8 @@ bool operator!=(const Photo &lhs, const Photo &rhs) {
 }
 
 StringBuilder &operator<<(StringBuilder &string_builder, const Photo &photo) {
-  string_builder << "[ID = " << photo.id.get() << ", photos = " << format::as_array(photo.photos);
+  string_builder << "[ID = " << photo.id.get() << ", date = " << photo.date
+                 << ", photos = " << format::as_array(photo.photos);
   if (!photo.animations.empty()) {
     string_builder << ", animations = " << format::as_array(photo.animations);
   }

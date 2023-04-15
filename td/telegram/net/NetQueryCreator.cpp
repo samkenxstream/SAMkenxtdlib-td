@@ -15,7 +15,6 @@
 #include "td/utils/format.h"
 #include "td/utils/Gzip.h"
 #include "td/utils/logging.h"
-#include "td/utils/Slice.h"
 #include "td/utils/Storer.h"
 
 namespace td {
@@ -37,7 +36,7 @@ NetQueryPtr NetQueryCreator::create(uint64 id, const telegram_api::Function &fun
   BufferSlice slice(storer.size());
   auto real_size = storer.store(slice.as_mutable_slice().ubegin());
   LOG_CHECK(real_size == slice.size()) << real_size << " " << slice.size() << " "
-                                       << format::as_hex_dump<4>(Slice(slice.as_slice()));
+                                       << format::as_hex_dump<4>(slice.as_slice());
 
   int32 tl_constructor = function.get_id();
 
