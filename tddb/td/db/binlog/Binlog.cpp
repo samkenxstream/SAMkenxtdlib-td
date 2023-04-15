@@ -139,7 +139,8 @@ class BinlogReader {
     }
 
     event->debug_info_ = BinlogDebugInfo{__FILE__, __LINE__};
-    event->init(input_->cut_head(size_).move_as_buffer_slice());
+    auto buffer_slice = input_->cut_head(size_).move_as_buffer_slice();
+    event->init(buffer_slice.as_slice().str());
     TRY_STATUS(event->validate());
     offset_ += size_;
     event->offset_ = offset_;
@@ -333,14 +334,7 @@ void Binlog::do_event(BinlogEvent &&event) {
     }
     VLOG(binlog) << "Write binlog event: " << format::cond(state_ == State::Reindex, "[reindex] ")
                  << event.public_to_string();
-    switch (encryption_type_) {
-      case EncryptionType::None:
-        buffer_writer_.append(event.raw_event_.clone());
-        break;
-      case EncryptionType::AesCtr:
-        buffer_writer_.append(as_slice(event.raw_event_));
-        break;
-    }
+    buffer_writer_.append(as_slice(event.raw_event_));
   }
 
   if (event.type_ < 0) {
@@ -436,6 +430,17 @@ void Binlog::flush() {
   }
   need_flush_since_ = 0;
   LOG_IF(FATAL, fd_.need_flush_write()) << "Failed to flush binlog";
+
+  if (state_ == State::Run && Time::now() > next_buffer_flush_time_) {
+    VLOG(binlog) << "Flush write buffer";
+    buffer_writer_ = ChainBufferWriter();
+    buffer_reader_ = buffer_writer_.extract_reader();
+    if (encryption_type_ == EncryptionType::AesCtr) {
+      aes_ctr_state_ = aes_xcode_byte_flow_.move_aes_ctr_state();
+    }
+    update_write_encryption();
+    next_buffer_flush_time_ = Time::now() + 1.0;
+  }
 }
 
 void Binlog::lazy_flush() {
@@ -652,11 +657,16 @@ void Binlog::do_reindex() {
   fd_events_ = 0;
   reset_encryption();
   processor_->for_each([&](BinlogEvent &event) {
-    event.realloc();
     do_event(std::move(event));  // NB: no move is actually happens
   });
-  need_sync_ = start_size != 0;  // must sync creation of the file if it is non-empty
-  sync();
+  {
+    flush();
+    if (start_size != 0) {  // must sync creation of the file if it is non-empty
+      auto status = fd_.sync_barrier();
+      LOG_IF(FATAL, status.is_error()) << "Failed to sync binlog: " << status;
+    }
+    need_sync_ = false;
+  }
 
   // finish_reindex
   auto status = unlink(path_);
