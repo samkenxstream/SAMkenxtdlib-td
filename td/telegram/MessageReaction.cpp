@@ -304,7 +304,7 @@ class GetMessageReactionsListQuery final : public Td::ResultHandler {
       auto message_sender = get_min_message_sender_object(td_, dialog_id, "GetMessageReactionsListQuery");
       if (message_sender != nullptr) {
         reactions.push_back(td_api::make_object<td_api::addedReaction>(get_reaction_type_object(reaction_str),
-                                                                       std::move(message_sender)));
+                                                                       std::move(message_sender), reaction->date_));
       }
     }
 
@@ -879,7 +879,8 @@ bool is_active_reaction(const string &reaction, const FlatHashMap<string, size_t
 }
 
 void reload_message_reactions(Td *td, DialogId dialog_id, vector<MessageId> &&message_ids) {
-  if (!td->messages_manager_->have_input_peer(dialog_id, AccessRights::Read) || message_ids.empty()) {
+  if (!td->messages_manager_->have_input_peer(dialog_id, AccessRights::Read) ||
+      dialog_id.get_type() == DialogType::SecretChat || message_ids.empty()) {
     return;
   }
 
@@ -958,6 +959,9 @@ void report_message_reactions(Td *td, FullMessageId full_message_id, DialogId ch
   }
   if (!td->messages_manager_->have_input_peer(dialog_id, AccessRights::Read)) {
     return promise.set_error(Status::Error(400, "Can't access the chat"));
+  }
+  if (dialog_id.get_type() == DialogType::SecretChat) {
+    return promise.set_error(Status::Error(400, "Reactions can't be reported in the chat"));
   }
 
   if (!td->messages_manager_->have_message_force(full_message_id, "report_user_reactions")) {

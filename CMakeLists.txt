@@ -6,7 +6,7 @@ if (POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 
-project(TDLib VERSION 1.8.11 LANGUAGES CXX C)
+project(TDLib VERSION 1.8.13 LANGUAGES CXX C)
 
 if (NOT DEFINED CMAKE_MODULE_PATH)
   set(CMAKE_MODULE_PATH "")
@@ -149,6 +149,9 @@ if (CLANG OR GCC)
     elseif (APPLE)
       set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-no_pie")
     endif()
+    include(AddCXXCompilerFlag)
+    add_cxx_compiler_flag("-static-libstdc++")
+    add_cxx_compiler_flag("-static-libgcc")
   endif()
 endif()
 
@@ -392,8 +395,10 @@ set(TDLIB_SOURCE
   td/telegram/MessageSender.cpp
   td/telegram/MessagesInfo.cpp
   td/telegram/MessagesManager.cpp
+  td/telegram/MessageSource.cpp
   td/telegram/MessageThreadDb.cpp
   td/telegram/MessageTtl.cpp
+  td/telegram/MessageViewer.cpp
   td/telegram/misc.cpp
   td/telegram/net/AuthDataShared.cpp
   td/telegram/net/ConnectionCreator.cpp
@@ -455,6 +460,7 @@ set(TDLIB_SOURCE
   td/telegram/StickerFormat.cpp
   td/telegram/StickerMaskPosition.cpp
   td/telegram/StickerPhotoSize.cpp
+  td/telegram/StickerSetId.cpp
   td/telegram/StickersManager.cpp
   td/telegram/StickerType.cpp
   td/telegram/StorageManager.cpp
@@ -474,6 +480,7 @@ set(TDLIB_SOURCE
   td/telegram/VideoNotesManager.cpp
   td/telegram/VideosManager.cpp
   td/telegram/VoiceNotesManager.cpp
+  td/telegram/WebApp.cpp
   td/telegram/WebPageBlock.cpp
   td/telegram/WebPagesManager.cpp
 
@@ -644,9 +651,11 @@ set(TDLIB_SOURCE
   td/telegram/MessageSender.h
   td/telegram/MessagesInfo.h
   td/telegram/MessagesManager.h
+  td/telegram/MessageSource.h
   td/telegram/MessageThreadDb.h
   td/telegram/MessageThreadInfo.h
   td/telegram/MessageTtl.h
+  td/telegram/MessageViewer.h
   td/telegram/MinChannel.h
   td/telegram/misc.h
   td/telegram/net/AuthDataShared.h
@@ -739,7 +748,6 @@ set(TDLIB_SOURCE
   td/telegram/Td.h
   td/telegram/TdCallback.h
   td/telegram/TdDb.h
-  td/telegram/TdParameters.h
   td/telegram/TermsOfService.h
   td/telegram/ThemeManager.h
   td/telegram/TopDialogCategory.h
@@ -755,6 +763,7 @@ set(TDLIB_SOURCE
   td/telegram/VideoNotesManager.h
   td/telegram/VideosManager.h
   td/telegram/VoiceNotesManager.h
+  td/telegram/WebApp.h
   td/telegram/WebPageBlock.h
   td/telegram/WebPageId.h
   td/telegram/WebPagesManager.h
@@ -802,12 +811,12 @@ set(TDLIB_SOURCE
   td/telegram/SendCodeHelper.hpp
   td/telegram/StickerMaskPosition.hpp
   td/telegram/StickerPhotoSize.hpp
-  td/telegram/StickerSetId.hpp
   td/telegram/StickersManager.hpp
   td/telegram/TranscriptionInfo.hpp
   td/telegram/VideoNotesManager.hpp
   td/telegram/VideosManager.hpp
   td/telegram/VoiceNotesManager.hpp
+  td/telegram/WebApp.hpp
 
   ${TL_TD_SCHEME_SOURCE}
 

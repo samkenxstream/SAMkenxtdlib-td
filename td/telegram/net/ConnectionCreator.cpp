@@ -8,6 +8,7 @@
 
 #include "td/telegram/ConfigManager.h"
 #include "td/telegram/Global.h"
+#include "td/telegram/LinkManager.h"
 #include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/MessagesManager.h"
 #include "td/telegram/net/MtprotoHeader.h"
@@ -58,10 +59,14 @@ class StatsCallback final : public mtproto::RawConnection::StatsCallback {
   }
 
   void on_read(uint64 bytes) final {
-    net_stats_callback_->on_read(bytes);
+    if (net_stats_callback_ != nullptr) {
+      net_stats_callback_->on_read(bytes);
+    }
   }
   void on_write(uint64 bytes) final {
-    net_stats_callback_->on_write(bytes);
+    if (net_stats_callback_ != nullptr) {
+      net_stats_callback_->on_write(bytes);
+    }
   }
 
   void on_pong() final {
@@ -232,39 +237,7 @@ void ConnectionCreator::get_proxy_link(int32 proxy_id, Promise<string> promise) 
     return promise.set_error(Status::Error(400, "Unknown proxy identifier"));
   }
 
-  auto &proxy = it->second;
-  string url = G()->get_option_string("t_me_url", "https://t.me/");
-  bool is_socks = false;
-  switch (proxy.type()) {
-    case Proxy::Type::Socks5:
-      url += "socks";
-      is_socks = true;
-      break;
-    case Proxy::Type::HttpTcp:
-    case Proxy::Type::HttpCaching:
-      return promise.set_error(Status::Error(400, "HTTP proxy can't have public link"));
-    case Proxy::Type::Mtproto:
-      url += "proxy";
-      break;
-    default:
-      UNREACHABLE();
-  }
-  url += "?server=";
-  url += url_encode(proxy.server());
-  url += "&port=";
-  url += to_string(proxy.port());
-  if (is_socks) {
-    if (!proxy.user().empty() || !proxy.password().empty()) {
-      url += "&user=";
-      url += url_encode(proxy.user());
-      url += "&pass=";
-      url += url_encode(proxy.password());
-    }
-  } else {
-    url += "&secret=";
-    url += proxy.secret().get_encoded_secret();
-  }
-  promise.set_value(std::move(url));
+  promise.set_result(LinkManager::get_proxy_link(it->second, false));
 }
 
 ActorId<GetHostByNameActor> ConnectionCreator::get_dns_resolver() {
@@ -446,7 +419,7 @@ void ConnectionCreator::enable_proxy_impl(int32 proxy_id) {
 void ConnectionCreator::disable_proxy_impl() {
   if (active_proxy_id_ == 0) {
     send_closure(G()->messages_manager(), &MessagesManager::remove_sponsored_dialog);
-    send_closure(G()->td(), &Td::schedule_get_promo_data, 0);
+    send_closure(G()->td(), &Td::reload_promo_data);
     return;
   }
   CHECK(proxies_.count(active_proxy_id_) == 1);
@@ -481,7 +454,7 @@ void ConnectionCreator::on_proxy_changed(bool from_db) {
   if (active_proxy_id_ == 0 || !from_db) {
     send_closure(G()->messages_manager(), &MessagesManager::remove_sponsored_dialog);
   }
-  send_closure(G()->td(), &Td::schedule_get_promo_data, 0);
+  send_closure(G()->td(), &Td::reload_promo_data);
 
   loop();
 }
